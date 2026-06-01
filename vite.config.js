@@ -2,6 +2,8 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+const basePath = process.env.VITE_BASE_PATH || '/'
+
 export default defineConfig({
   plugins: [react()],
   server: {
@@ -17,6 +19,5 @@ export default defineConfig({
       }
     }
   },
-  base:process.env.VITE_BASE_PATH || "/Growthify.ai_frontend",
-
+  base: basePath,
 })
