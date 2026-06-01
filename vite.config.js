@@ -16,5 +16,7 @@ export default defineConfig({
         ws: true
       }
     }
-  }
+  },
+  base:process.env.VITE_BASE_PATH || "/Growthify.ai_frontend",
+
 })
