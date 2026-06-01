@@ -16,9 +16,19 @@ const platformTabs = [
 const Trends = () => {
   const [activePlatform, setActivePlatform] = useState('yt');
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [apiTrends, setApiTrends] = useState({ youtube: [], reddit: [], X: [], youtube_music: [] });
   const [savedTrends, setSavedTrends] = useState([]);
   const [savedTrendIds, setSavedTrendIds] = useState([]);
+
+  const applyTrendData = (data) => {
+    setApiTrends({
+      youtube: (data.youtube || []).map(i => ({ ...i, score: 95, likes: "Trending", tags: ["#yt"] })),
+      reddit: (data.reddit || []).map(i => ({ ...i, score: i.score > 100 ? 99 : i.score, likes: i.score, tags: [`#${i.subreddit}`] })),
+      X: (data.x || []).map(i => ({ ...i, title: i.hashtag, score: 90, likes: "High", tags: ["#X"] })),
+      youtube_music: (data.youtube_music || []).map(i => ({ ...i, score: 88, likes: "Viral", tags: ["#Music"] }))
+    });
+  };
 
   // Fetch all trends
   useEffect(() => {
@@ -27,13 +37,7 @@ const Trends = () => {
         setLoading(true);
         const res = await axios.get("/api/v1/trending");
         if (res.data?.success) {
-          const d = res.data.data;
-          setApiTrends({
-            youtube: (d.youtube || []).map(i => ({ ...i, score: 95, likes: "Trending", tags: ["#yt"] })),
-            reddit: (d.reddit || []).map(i => ({ ...i, score: i.score > 100 ? 99 : i.score, likes: i.score, tags: [`#${i.subreddit}`] })),
-            X: (d.x || []).map(i => ({ ...i, title: i.hashtag, score: 90, likes: "High", tags: ["#X"] })),
-            youtube_music: (d.youtube_music || []).map(i => ({ ...i, score: 88, likes: "Viral", tags: ["#Music"] }))
-          });
+          applyTrendData(res.data.data || {});
         }
       } catch (err) { 
         console.error(err); 
@@ -65,6 +69,28 @@ const Trends = () => {
     };
     fetchSavedTrends();
   }, []);
+
+  const handleRefreshTrends = async () => {
+    try {
+      setRefreshing(true);
+      const token = localStorage.getItem("token");
+      const res = await axios.post("/api/v1/trending/refresh", {}, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      if (res.data?.success) {
+        applyTrendData(res.data.data || {});
+        toast.success("Trends refreshed");
+      }
+    } catch (error) {
+      console.error("Error refreshing trends:", error);
+      toast.error(error.response?.data?.message || "Failed to refresh trends");
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   // Save trend
   const handleSaveTrend = async (trend, platform) => {
@@ -152,7 +178,27 @@ const Trends = () => {
     <div style={{ fontFamily: font }}>
       {/* Header */}
       <div style={{ marginBottom: 20 }}>
-        <h1 style={{ color: C.textPrimary, fontSize: "clamp(24px, 5vw, 32px)", fontWeight: 800 }}>Explore Trends</h1>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <h1 style={{ color: C.textPrimary, fontSize: "clamp(24px, 5vw, 32px)", fontWeight: 800 }}>Explore Trends</h1>
+          <button
+            type="button"
+            onClick={handleRefreshTrends}
+            disabled={refreshing}
+            style={{
+              background: "#000",
+              color: "#fff",
+              border: "none",
+              borderRadius: 4,
+              padding: "6px 12px",
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: refreshing ? "not-allowed" : "pointer",
+              opacity: refreshing ? 0.7 : 1
+            }}
+          >
+            {refreshing ? "refreshing" : "refresh"}
+          </button>
+        </div>
         <p style={{ color: C.textSecondary, fontSize: 14.5 }}>Discover real-time topics across platforms.</p>
       </div>
 
