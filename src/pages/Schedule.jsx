@@ -1,64 +1,151 @@
-import React, { useState } from "react";
-import { Calendar as CalendarIcon, ListTodo, Plus, ChevronLeft, ChevronRight, Edit2, Check } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import {
+  Calendar as CalendarIcon,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Edit2,
+  ListTodo,
+  Plus,
+} from "lucide-react";
+import axios from "axios";
+import toast from "react-hot-toast";
 import styles from "./schedule.module.css";
 
 const Schedule = () => {
   const [activeTab, setActiveTab] = useState("scheduled");
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
-  
-  // Form States
+  const [loadingTasks, setLoadingTasks] = useState(false);
+  const [savingTask, setSavingTask] = useState(false);
+
   const [newTaskText, setNewTaskText] = useState("");
   const [newTaskDate, setNewTaskDate] = useState("");
   const [newTaskPriority, setNewTaskPriority] = useState("medium");
-  
-  // 🟢 Edit Mode State
-  const [editingTaskId, setEditingTaskId] = useState(null); 
+  const [editingTaskId, setEditingTaskId] = useState(null);
+  const [tasks, setTasks] = useState([]);
 
-  // Initial Data
-  const [tasks, setTasks] = useState([
-    { id: 1, text: "Upload YouTube Video", date: "2026-03-10", type: "scheduled", priority: "high" },
-    { id: 2, text: "Write script", date: "2026-03-10", type: "scheduled", priority: "medium" },
-    { id: 3, text: "Brainstorm niches", date: "", type: "unscheduled", priority: "low" },
-  ]);
-
-  // Calendar Helpers
   const getDaysInMonth = (year, month) => new Date(year, month + 1, 0).getDate();
   const getFirstDayOfMonth = (year, month) => new Date(year, month, 1).getDay();
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
   const daysInMonth = getDaysInMonth(year, month);
   const firstDay = getFirstDayOfMonth(year, month);
+  const monthQuery = `${year}-${String(month + 1).padStart(2, "0")}`;
 
-  const formatDate = (y, m, d) => `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-  const prevMonth = () => setCurrentDate(new Date(year, month - 1, 1));
-  const nextMonth = () => setCurrentDate(new Date(year, month + 1, 1));
-  const createTaskId = () => globalThis.crypto?.randomUUID?.() || `task-${tasks.length + 1}`;
+  const formatDate = (y, m, d) =>
+    `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 
-  // 🟢 Add OR Update Task Logic
-  const handleAddOrUpdateTask = () => {
-    if (!newTaskText) return;
+  const getAuthConfig = () => ({
+    headers: {
+      Authorization: `Bearer ${localStorage.getItem("token")}`,
+    },
+  });
 
-    if (editingTaskId) {
-      setTasks(tasks.map(task => task.id === editingTaskId ? {
-        ...task,
-        text: newTaskText,
-        type: activeTab,
-        priority: newTaskPriority,
-        date: activeTab === "scheduled" ? newTaskDate : "",
-      } : task));
-      setEditingTaskId(null);
-    } else {
-      const newTask = {
-        id: createTaskId(),
-        text: newTaskText,
-        type: activeTab,
-        priority: newTaskPriority,
-        date: activeTab === "scheduled" ? newTaskDate : "",
-      };
-      setTasks([...tasks, newTask]);
-    }
+  const normalizeTask = (task) => ({
+    ...task,
+    id: task._id || task.id,
+    text: task.text || "",
+    type: task.type || "scheduled",
+    priority: task.priority || "medium",
+    date: task.date || "",
+  });
+
+  const isTaskVisibleInCurrentMonth = (task) =>
+    task.type === "unscheduled" || task.date?.startsWith(`${monthQuery}-`);
+
+  const resetForm = () => {
+    setNewTaskText("");
+    setNewTaskDate("");
+    setNewTaskPriority("medium");
+    setEditingTaskId(null);
+  };
+
+  const prevMonth = () => {
+    const nextDate = new Date(year, month - 1, 1);
+    setCurrentDate(nextDate);
+    setSelectedDate(nextDate);
     resetForm();
+  };
+
+  const nextMonth = () => {
+    const nextDate = new Date(year, month + 1, 1);
+    setCurrentDate(nextDate);
+    setSelectedDate(nextDate);
+    resetForm();
+  };
+
+  useEffect(() => {
+    const fetchTasks = async () => {
+      try {
+        setLoadingTasks(true);
+        const res = await axios.get(`/api/schedule?month=${monthQuery}`, getAuthConfig());
+
+        if (res.data?.success) {
+          setTasks((res.data.data || []).map(normalizeTask));
+        }
+      } catch (error) {
+        console.error("Error fetching schedule tasks:", error);
+        toast.error(error.response?.data?.message || "Failed to load schedule");
+      } finally {
+        setLoadingTasks(false);
+      }
+    };
+
+    fetchTasks();
+  }, [monthQuery]);
+
+  const handleAddOrUpdateTask = async () => {
+    const text = newTaskText.trim();
+
+    if (!text) {
+      toast.error("Task text is required");
+      return;
+    }
+
+    if (activeTab === "scheduled" && !newTaskDate) {
+      toast.error("Please choose a date for scheduled tasks");
+      return;
+    }
+
+    const payload = {
+      text,
+      type: activeTab,
+      priority: newTaskPriority,
+      date: activeTab === "scheduled" ? newTaskDate : "",
+    };
+
+    try {
+      setSavingTask(true);
+
+      if (editingTaskId) {
+        const res = await axios.put(`/api/schedule/${editingTaskId}`, payload, getAuthConfig());
+        const updatedTask = normalizeTask(res.data.data);
+
+        setTasks((prevTasks) => {
+          const withoutEdited = prevTasks.filter((task) => task.id !== editingTaskId);
+          return isTaskVisibleInCurrentMonth(updatedTask)
+            ? [...withoutEdited, updatedTask]
+            : withoutEdited;
+        });
+        toast.success("Task updated");
+      } else {
+        const res = await axios.post("/api/schedule", payload, getAuthConfig());
+        const createdTask = normalizeTask(res.data.data);
+
+        if (isTaskVisibleInCurrentMonth(createdTask)) {
+          setTasks((prevTasks) => [...prevTasks, createdTask]);
+        }
+        toast.success("Task added");
+      }
+
+      resetForm();
+    } catch (error) {
+      console.error("Error saving schedule task:", error);
+      toast.error(error.response?.data?.message || "Failed to save task");
+    } finally {
+      setSavingTask(false);
+    }
   };
 
   const handleEditClick = (task) => {
@@ -69,34 +156,37 @@ const Schedule = () => {
     setActiveTab(task.type);
   };
 
-  const resetForm = () => {
-    setNewTaskText("");
-    setNewTaskDate("");
-    setNewTaskPriority("medium");
-    setEditingTaskId(null);
+  const handleCompleteTask = async (id) => {
+    try {
+      await axios.delete(`/api/schedule/${id}`, getAuthConfig());
+      setTasks((prevTasks) => prevTasks.filter((task) => task.id !== id));
+      toast.success("Task completed");
+    } catch (error) {
+      console.error("Error completing task:", error);
+      toast.error(error.response?.data?.message || "Failed to complete task");
+    }
   };
 
-  const handleCompleteTask = (id) => {
-    setTasks(tasks.filter(task => task.id !== id));
-  };
-
+  const selectedDateString = formatDate(
+    selectedDate.getFullYear(),
+    selectedDate.getMonth(),
+    selectedDate.getDate()
+  );
   const filteredTasks = tasks.filter((task) => task.type === activeTab);
 
   return (
     <div className={styles.container}>
-      
-      {/* 🟢 LEFT HALF: CALENDAR */}
       <div className={styles.panel}>
         <h2 className={styles.title}><CalendarIcon color="#0ea5e9" /> Calendar</h2>
-        
+
         <div className={styles.calendarHeader}>
-          <button onClick={prevMonth} style={{background: 'none', border:'none', color:'white', cursor:'pointer'}}><ChevronLeft/></button>
+          <button onClick={prevMonth} style={{ background: "none", border: "none", color: "white", cursor: "pointer" }}><ChevronLeft /></button>
           <span>{currentDate.toLocaleString("default", { month: "long" })} {year}</span>
-          <button onClick={nextMonth} style={{background: 'none', border:'none', color:'white', cursor:'pointer'}}><ChevronRight/></button>
+          <button onClick={nextMonth} style={{ background: "none", border: "none", color: "white", cursor: "pointer" }}><ChevronRight /></button>
         </div>
 
         <div className={styles.weekdays}>
-          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(day => <div key={day}>{day}</div>)}
+          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => <div key={day}>{day}</div>)}
         </div>
 
         <div className={styles.daysGrid}>
@@ -107,32 +197,30 @@ const Schedule = () => {
           {Array.from({ length: daysInMonth }).map((_, i) => {
             const dayNum = i + 1;
             const thisCellDate = formatDate(year, month, dayNum);
-            
-            const dayTasks = tasks.filter(t => t.date === thisCellDate && t.type === "scheduled");
-            const isSelected = formatDate(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate()) === thisCellDate;
+            const dayTasks = tasks.filter((task) => task.date === thisCellDate && task.type === "scheduled");
+            const isSelected = selectedDateString === thisCellDate;
 
             return (
-              <div 
-                key={dayNum} 
+              <div
+                key={dayNum}
                 className={`${styles.dayCell} ${isSelected ? styles.active : ""}`}
-                // 🟢 MAGIC HAPPENS HERE: Auto-fill date & switch tab
                 onClick={() => {
-                  setSelectedDate(new Date(year, month, dayNum)); 
-                  setNewTaskDate(thisCellDate); 
+                  setSelectedDate(new Date(year, month, dayNum));
+                  setNewTaskDate(thisCellDate);
                   setActiveTab("scheduled");
                 }}
               >
                 {dayNum}
-                
+
                 <div className={styles.dotsContainer}>
-                  {dayTasks.map(t => (
-                    <div 
-                      key={t.id} 
+                  {dayTasks.map((task) => (
+                    <div
+                      key={task.id}
                       className={`${styles.taskDot} ${
-                        t.priority === 'high' ? styles.dotHigh : 
-                        t.priority === 'medium' ? styles.dotMedium : styles.dotLow
+                        task.priority === "high" ? styles.dotHigh :
+                        task.priority === "medium" ? styles.dotMedium : styles.dotLow
                       }`}
-                      title={t.text}
+                      title={task.text}
                     ></div>
                   ))}
                 </div>
@@ -142,7 +230,6 @@ const Schedule = () => {
         </div>
       </div>
 
-      {/* 🟢 RIGHT HALF: TODO LIST */}
       <div className={styles.panel}>
         <h2 className={styles.title}><ListTodo color="#10b981" /> Tasks & Planning</h2>
 
@@ -151,14 +238,16 @@ const Schedule = () => {
           <button className={`${styles.tabBtn} ${activeTab === "unscheduled" ? styles.activeTab : ""}`} onClick={() => setActiveTab("unscheduled")}>Non Scheduled Task</button>
         </div>
 
-        {/* Input Form with Priority Dropdown */}
         <div className={styles.inputGroup}>
           <div className={styles.inputRow}>
-            <input 
-              type="text" placeholder="What needs to be done?" className={styles.input}
-              value={newTaskText} onChange={(e) => setNewTaskText(e.target.value)}
+            <input
+              type="text"
+              placeholder="What needs to be done?"
+              className={styles.input}
+              value={newTaskText}
+              onChange={(e) => setNewTaskText(e.target.value)}
             />
-            <select 
+            <select
               className={styles.prioritySelect}
               value={newTaskPriority}
               onChange={(e) => setNewTaskPriority(e.target.value)}
@@ -168,18 +257,22 @@ const Schedule = () => {
               <option value="high">High Priority</option>
             </select>
           </div>
-          
+
           {activeTab === "scheduled" && (
-            <input type="date" className={styles.input} value={newTaskDate} onChange={(e) => setNewTaskDate(e.target.value)} />
+            <input
+              type="date"
+              className={styles.input}
+              value={newTaskDate}
+              onChange={(e) => setNewTaskDate(e.target.value)}
+            />
           )}
 
-          {/* 🟢 Dynamic Buttons based on Edit State */}
           <div className={styles.formButtons}>
-            <button onClick={handleAddOrUpdateTask} className={styles.addBtn}>
+            <button onClick={handleAddOrUpdateTask} className={styles.addBtn} disabled={savingTask}>
               {editingTaskId ? (
-                <><Check size={18} style={{verticalAlign: 'middle', marginRight: 5}}/> Update Task</>
+                <><Check size={18} style={{ verticalAlign: "middle", marginRight: 5 }} /> {savingTask ? "Updating..." : "Update Task"}</>
               ) : (
-                <><Plus size={18} style={{verticalAlign: 'middle', marginRight: 5}}/> Add Task</>
+                <><Plus size={18} style={{ verticalAlign: "middle", marginRight: 5 }} /> {savingTask ? "Adding..." : "Add Task"}</>
               )}
             </button>
 
@@ -191,14 +284,14 @@ const Schedule = () => {
           </div>
         </div>
 
-        {/* Render Task List */}
         <div className={styles.taskList}>
-          {filteredTasks.length === 0 ? (
-            <p style={{color: '#94a3b8', textAlign: 'center', marginTop: 20}}>All done for now!</p>
+          {loadingTasks ? (
+            <p style={{ color: "#94a3b8", textAlign: "center", marginTop: 20 }}>Loading tasks...</p>
+          ) : filteredTasks.length === 0 ? (
+            <p style={{ color: "#94a3b8", textAlign: "center", marginTop: 20 }}>All done for now!</p>
           ) : (
             filteredTasks.map((task) => (
               <div key={task.id} className={styles.taskItem}>
-                
                 <div className={styles.taskContent}>
                   <div className={styles.radioBtn} onClick={() => handleCompleteTask(task.id)} title="Mark as done"></div>
                   <div>
@@ -209,46 +302,27 @@ const Schedule = () => {
 
                 <div className={styles.taskActions}>
                   <div className={`${styles.priorityBadge} ${
-                      task.priority === 'high' ? styles.badgeHigh : 
-                      task.priority === 'medium' ? styles.badgeMedium : styles.badgeLow
-                    }`}>
+                    task.priority === "high" ? styles.badgeHigh :
+                    task.priority === "medium" ? styles.badgeMedium : styles.badgeLow
+                  }`}>
                     {task.priority}
                   </div>
-                  
-                  <button 
-                    className={styles.editBtn} 
+
+                  <button
+                    className={styles.editBtn}
                     onClick={() => handleEditClick(task)}
                     title="Edit Task"
                   >
                     <Edit2 size={16} />
                   </button>
                 </div>
-
               </div>
             ))
           )}
         </div>
-
       </div>
     </div>
   );
 };
 
 export default Schedule;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
